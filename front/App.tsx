@@ -1,118 +1,114 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import Geolocation from '@react-native-community/geolocation';
+import React, { useEffect, useState } from 'react';
+import { Button, PermissionsAndroid, View } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
+import socket from 'socket.io-client';
+import dotenv from "dotenv"
 
-import React from 'react';
-import type {PropsWithChildren} from 'react';
-import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  useColorScheme,
-  View,
-} from 'react-native';
+dotenv.config()
 
-import {
-  Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
+const SERVER_URL = process.env.SERVER_URL;
 
-type SectionProps = PropsWithChildren<{
-  title: string;
-}>;
+const App = () => {
+  const [region, setRegion] = useState({ latitude: 0, longitude: 0 });
+  const [isSending, setIsSending] = useState(true);
 
-function Section({children, title}: SectionProps): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
-      </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
-      </Text>
-    </View>
-  );
-}
+  const io = socket(SERVER_URL);
 
-function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
+  useEffect(() => {
+    io.emit('join', (error: Error) => {
+      console.log('joined a stream');
+      if (error) console.log(error);
+    });
+  }, []);
 
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
+  const requestLocation = async () => {
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Location Permission',
+          message: 'We need to access your location',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'Ok',
+        },
+      );
+
+      if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+        console.log('Location permission granted');
+        getCurrentLocation();
+      } else {
+        console.log('Location permission denied');
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const getCurrentLocation = () => {
+    const locationUpdate = setInterval(() => {
+      Geolocation.getCurrentPosition(
+        position => {
+          console.log(position);
+          setRegion({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+
+          if (isSending) {
+            io.emit('setLocation', {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            });
+          }
+        },
+        error => {
+          console.error(error);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
+      );
+    }, 5000);
+
+    return () => clearInterval(locationUpdate);
+  };
+
+  const stopSendingLocation = () => {
+    setIsSending(false);
+    // Emit a signal to the server to stop sending location updates
+    io.emit('stopSendingLocation');
+  };
+
+  const getSomeoneLocation = () => {
+    io.on('getLocation', data => {
+      console.log(data);
+      setRegion({
+        latitude: data.latitude,
+        longitude: data.longitude,
+      });
+    });
+
+    return () => {
+      io.off('getLocation');
+    };
   };
 
   return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
-      />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <Header />
-        <View
-          style={{
-            backgroundColor: isDarkMode ? Colors.black : Colors.white,
-          }}>
-          <Section title="Step One">
-            Edit <Text style={styles.highlight}>App.tsx</Text> to change this
-            screen and then come back to see your edits.
-          </Section>
-          <Section title="See Your Changes">
-            <ReloadInstructions />
-          </Section>
-          <Section title="Debug">
-            <DebugInstructions />
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
-          <LearnMoreLinks />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <View style={{ flex: 1 }}>
+      <MapView
+        style={{ flex: 1 }}
+        region={{
+          latitude: region.latitude,
+          longitude: region.longitude,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        }}>
+        <Marker coordinate={region} />
+      </MapView>
+      <Button title="Set Location" onPress={requestLocation} />
+      <Button title="Stop sending location" onPress={stopSendingLocation} />
+      <Button title="Get Location" onPress={getSomeoneLocation} />
+    </View>
   );
-}
-
-const styles = StyleSheet.create({
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-  },
-  highlight: {
-    fontWeight: '700',
-  },
-});
+};
 
 export default App;
